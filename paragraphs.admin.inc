@@ -486,12 +486,16 @@ function paragraphs_modal_admin_save_close($form, &$form_state) {
 
   // Refresh display of Paragraph that was edited.
   if (is_object($form_state['build_info']['args'][0]) && !empty($form_state['build_info']['args'][0]->item_id)) {
-    $item_id = $form_state['build_info']['args'][0]->item_id;
+    $selector = '.paragraphs-item-' . $form_state['build_info']['args'][0]->item_id;
     $revision_id = $form_state['build_info']['args'][0]->revision_id;
     $fresh_paragraph = paragraphs_item_revision_load($revision_id)->view();
     $new_element = '<div class=\'messages status paragraphs-modal-admin-message\'>' . t('Paragraph !type has been updated.', array('!type' => $bundle->name)) . '</div>';
-    $new_element .= backdrop_render($fresh_paragraph['paragraphs_item']);
-    $commands['#commands'][] = ajax_command_html('.paragraphs-item-' . $item_id . ' .content', $new_element);
+    $new_element .= backdrop_render($fresh_paragraph);
+    $commands['#commands'][] = array(
+      'command' => 'paragraphs_modal_admin_refresh',
+      'selector' => $selector,
+      'new_element' => $new_element,
+    );
     $commands['#commands'][] = array(
       'command' => 'paragraphs_modal_admin_message_hide',
     );
@@ -546,9 +550,11 @@ function paragraphs_modal_admin_sort_form($form, &$form_state, $paragraphs_item)
       $item['entity'] = paragraphs_item_load($item['value']);
       $item_render_array = $item['entity']->view('paragraphs_editor_preview', $langcode);
       $item_markup = backdrop_render($item_render_array);
+      $has_markup = TRUE;
+      $bundle = paragraphs_bundle_load($item['entity']->bundle);
       if (empty($item_markup) || empty(trim(strip_tags($item_markup, '<img><a>')))) {
-        $bundle = paragraphs_bundle_load($item['entity']->bundle);
         $item_markup = $bundle->name;
+        $has_markup = FALSE;
       }
       $form['paragraphs_items'][$item['value']] = array(
         'preview' => array(
@@ -566,6 +572,20 @@ function paragraphs_modal_admin_sort_form($form, &$form_state, $paragraphs_item)
           '#title_display' => 'invisible',
         ),
       );
+
+      if ($has_markup) {
+        // Display collapsed if there is something to preview.
+        $summary_preview = trim(filter_xss(truncate_utf8(strip_tags($item_markup), 140, TRUE, TRUE, 150)));
+        $summary = t('Preview') . ($summary_preview ? '<span class="paragraphs--preview-description">: ' . $summary_preview . '</span>' : '');
+        $form['paragraphs_items'][$item['value']]['preview'] = array(
+          '#type' => 'details',
+          '#summary' => $summary,
+          '#details' => $item_markup,
+          '#attributes' => array(
+            'class' => array('paragraphs--collapsible-preview'),
+          ),
+        );
+      }
     }
     $form['actions'] = array(
       '#type' => 'actions',
@@ -849,7 +869,7 @@ function paragraphs_modal_admin_add_form($form, &$form_state, $mode, $paragraphs
   // Create the new paragraph item and set the host entity + position.
   $new_paragraph = entity_create('paragraphs_item', array(
     'bundle' => $paragraphs_bundle->bundle,
-    'field_name' => $field_name
+    'field_name' => $field_name,
   ));
   $new_paragraph->setHostEntity($host_entity_type, $host_entity, $host_entity->langcode, FALSE);
   $new_paragraph->position = $new_paragraph_position;
@@ -921,8 +941,8 @@ function paragraphs_modal_admin_add_form_submit($form, &$form_state) {
     $new_paragraph = array(
       array(
         'value' => $paragraphs_item->item_id,
-        'revision_id' => $paragraphs_item->revision_id
-      )
+        'revision_id' => $paragraphs_item->revision_id,
+      ),
     );
 
     // Load the paragraphs field from the host entity and insert the new paragraph item in the correct position.
